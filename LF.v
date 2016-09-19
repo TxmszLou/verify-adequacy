@@ -898,7 +898,6 @@ Module adequacy.
   Check arith.plus_step. (* : forall v e : arith.t, arith.value v -> arith.step ... *)
   (* proof system adequacy *)
   (* a) LF type/tm -> Coq type/tm *)
-  Fixpoint LC_p : (e : LF.expr.t 0) :
   (* b) LF Arith tm -> Coq tm *)
   
   
