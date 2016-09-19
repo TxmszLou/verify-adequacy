@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+
+DEPS=(StructTact)
+CANARIES=("StructTact.StructTactics" "Build StructTact before building LF")
+
+StructTact_PATH="../StructTact"
+
+source coqproject.sh
