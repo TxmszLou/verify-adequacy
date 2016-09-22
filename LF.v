@@ -60,7 +60,6 @@ Module member.
   Defined.
 End member.
 
-(**
 Module hlist.
   Local Open Scope list.
 
@@ -126,7 +125,7 @@ Module hlist.
     Arguments There {_ _ _ _ _ _ _ _} _.
   End member.
   
-End hlist. *)
+End hlist.
 
 (** LF implemented in Coq *)
 
@@ -181,7 +180,6 @@ Module LF.
       | TmApp M N => TmApp (lift c M) (lift c N)
       end.
 
-    (* lift variables by k *)
     Fixpoint lift_k (k c : nat) {n} (e : t n) : t (n + k).
       refine match k with
              | 0 => _
@@ -408,13 +406,13 @@ Module LF.
     .
 
     Inductive big_par_red : forall {n}, t n -> t n -> Prop :=
-    | big_z : forall n M, @par_red n M M -> big_par_red M M
-    | big_s : forall n M M' M'', @big_par_red n M M' -> big_par_red M' M'' -> big_par_red M M''
+    | this : forall n M, @par_red n M M -> big_par_red M M
+    | next : forall n M M' M'', @big_par_red n M M' -> big_par_red M' M'' -> big_par_red M M''
     .
 
     Inductive def_eq : forall {n}, t n -> t n -> Prop :=
     | def_red : forall n M1 M2, @par_red n M1 M2 -> def_eq M1 M2
-    | def_symm : forall n M1 M2, def_eq M1 M2 -> @def_eq n M2 M1
+    | def_symm : forall n M1 M2, def_eq M1 M2 -> @def_eq n M1 M2
     | def_trans : forall n M1 M2 M3, @def_eq n M1 M2 -> @def_eq n M2 M3 -> @def_eq n M1 M3
     .
 
@@ -422,32 +420,22 @@ Module LF.
       Delimit Scope expr_scope with expr.
       Bind Scope expr_scope with expr.t.
 
-      Coercion TmApp : expr.t >-> Funclass.
-      Coercion TyApp : expr.t >-> Funclass.
-
-      Notation "'\' e" := (expr.TmLam e) (at level 50) : expr_scope.
-      Notation "'/\' e" := (expr.TyLam e) (at level 50) : expr_scope.
-      Notation "A -> B" := (expr.TyPi A B) : expr_scope.
-
-      Local Open Scope expr.
-
-      Check (\ (TmVar Fin.F1)).
-      Check ((TyConst "Nat"%string) -> (TyConst "test"%string)).
-
       Notation " M ~> M' " := (par_red M M') (at level 60, right associativity) : expr_scope.
       Notation " M ~>* M' " := (big_par_red M M') (at level 60, right associativity) : expr_scope.
       Notation " M == M' " := (def_eq M M') (at level 60, right associativity) : expr_scope.
     End notations.
 
-    
+    (* canonical form judgment *)
+    (* Inductive canonical : expr.t 0 -> Prop := *)
+    (* | stuck : forall e, par_red e e. *)
+    Hypothesis canonical : expr.t 0 -> Prop.
 
     (** properties of the definitional equality wrt. parallel reduction *)
 
     Import notations.
     Open Scope expr.
     Check (KType ~> KType).
-    Theorem diamond_property : forall n (U : t n) U' U'', U ~> U' -> U ~> U'' -> exists V, U' ~> V /\ U'' ~> V.
-      (* implement Tait's method *)
+    Theorem diamond_property : forall n (U : t n) U' U'', (U ~> U') -> U ~> U'' -> exists V, U' ~> V /\ U'' ~> V.
     Admitted.
 
     Theorem church_rosser : forall n (U : t n) U' U'', (U ~>* U') -> U ~>* U'' -> exists V, U' ~>* V /\ U'' ~>* V.
@@ -468,13 +456,6 @@ Module LF.
     | cons : forall n (e : expr.t n) (C : t n), t (S n)
     .
 
-    Lemma transport : forall n m, n = m -> t n = t n.
-      auto.
-    Qed.
-
-    Hint Rewrite transport.
-
-
     (* find the type of nth bound variable *)
     Fixpoint nth {n} (C : t n) : Fin.t n -> expr.t n.
       refine match C with
@@ -492,35 +473,16 @@ Module LF.
                           (cons (expr.KType) nil)) (Fin.FS (Fin.F1)).
     (* => expr.KType *)
 
-    Hint Rewrite plus_n_O.
-    Hint Rewrite Nat.add_succ_r.
     (* context concatenation *)
     Fixpoint concat {n} {m} (C : t n) (C' : t m) : t (n + m).
-      refine match C' with
+      refine match C with
              | nil => _
-             | cons e C' => _
+             | cons e C => _
              end.
-      - replace (n + 0) with n by apply plus_n_O. exact C.
-      - Search (_ + S _ = S _). replace (n + S n0) with (S (n + n0)) by (symmetry; apply Nat.add_succ_r).
-        refine (cons _ _ ).
-        replace (n + n0) with (n0 + n) by omega.
-        exact (expr.lift_k n 0 e).
-        exact (concat n n0 C C').
-    Defined.
-
-    Module test.
-      Variable n : nat.
-      Variable C : ctx.t n.
-      Definition concat_C_nil : t n.
-        replace n with (n + 0) by auto.
-        exact (concat C nil).
-      Defined.
-
-      Print concat_C_nil.
-    End test.
-    
+      - exact C'.
+      - exact (cons (expr.lift_k m 0 e) (concat n0 m C C')).
+    Qed.
   End ctx.
-
 
   Module sig.
     Local Open Scope list.
@@ -530,121 +492,13 @@ Module LF.
 
     Definition t := list (guid.t * expr.t 0)%type.
 
-    Inductive defined (name : guid.t) : t -> Type :=
+    Inductive defined (name : guid.t) : t -> Prop :=
     | Here  : forall Sig e, defined name ((name,e)::Sig)
     | There : forall Sig x e, defined name Sig -> defined name ((x,e)::Sig)
     .
-
-    Locate "+".
-    Print inl.
-
-    Fixpoint defined_dec_ty (x : guid.t) (s : t) {struct s} : (defined x s) + (defined x s -> False).
-      refine match s as s0 return (defined x s0) + (defined x s0 -> False) with
-             | [] => _
-             | (x',e)::s => _
-             end.
-      - intuition.
-      - destruct (guid.eq_dec x x').
-        left. rewrite e0. exact (Here x' s e).
-        destruct (defined_dec_ty x s).
-        left. exact (There x' e d).
-        right. intuition. inv H.
-        exact (n eq_refl).
-        exact (f H1).
-    Admitted.
     
-
-    Fixpoint defined_dec (x : guid.t) (s : t) {struct s} : {inhabited (defined x s)} + {~ inhabited (defined x s)}.
-      refine match s as s0 return {inhabited (defined x s0)} + {~ inhabited (defined x s0)} with
-             | [] => _
-             | (x',e)::s => _
-             end.
-      intuition.
-      destruct (guid.eq_dec x x').
-      left. rewrite e0. exact (inhabits (Here x' s e)).
-      destruct (defined_dec x s).
-      left. inv i. exact (inhabits (There x' e H)).
-      right. intuition. inv H. inv H0.
-      exact (n eq_refl).
-      exact (n0 (inhabits H2)).
-    Admitted.
-
-    (**
-    Fixpoint defined (x : guid.t) (s : t) : Prop :=
-      match s with
-      | [] => False
-      | (x',e)::s => if (guid.eq_dec x x') then True else defined x s
-      end. *)
-
-    Arguments Here {_ _ _}.
-    Arguments There {_ _ _ _} _.
-
-    Definition case_nil (x : guid.t) {P : Type} (m : defined x []) : P :=
-      match m with
-      | Here  => I
-      | There p => I
-      end.
-
-    Definition case_cons {x : guid.t} {s} (P : forall p, defined x (p :: s) -> Type)
-              (PHere : forall e, P (x,e) Here)
-              (PThere : forall x e m, P (x,e) (There m))
-              {p} (m : defined x (p :: s)) : P p m.
-    revert P PHere PThere.
-    refine match m with
-           | Here => _
-           | There m => _
-           end; auto.
-    Defined.
-      
-
-    Fixpoint get (s : t) (x : guid.t) : defined x s -> expr.t 0.
-      refine match s with
-             | [] => fun m => case_nil m
-             | (x',e)::s' => fun m => _
-             end.
-      destruct (x',e), m using case_cons.
-      - exact e.
-      - exact (get s' _ m).
-    Defined.
-
-    Definition hello_defined : defined "hello"%string [("T"%string, expr.KType) ; ("hello"%string, expr.TyConst "T"%string)] := There Here.
-    Eval compute in get hello_defined.
-
+    Check defined "hello"%string [("T"%string, expr.KType) ; ("hello"%string, expr.TyConst "T"%string)].
   End sig.
-
-  Module canonical.
-    (* canonical form judgment *)
-    Import expr.
-    Fixpoint t {n} (e : expr.t n) {struct e} : ctx.t n -> sig.t -> Prop.
-      refine match e with
-             | KType => fun _ _ => True
-             | KPi A K =>fun c s => _
-             | TyConst k => fun c s => _
-             | TyPi A B =>fun c s => _
-             | TyLam B =>fun c s => False
-             | TyApp A M =>fun c s => _
-             | TmConst k =>fun c s => _
-             | TmVar f =>fun c s => _
-             | TmLam M =>fun c s => False
-             | TmApp M N =>fun c s => _
-             end.
-      - (* KPi *) exact (t n0 A c s /\ t (S n0) K (ctx.cons A c) s).
-      - (* TyConst *) destruct (sig.defined_dec_ty k s).
-        refine (t _ (sig.get d) (ctx.nil) s).
-        exact False.
-      - (* TyPi *) exact (t n0 A c s /\ t (S n0) B (ctx.cons A c) s).
-      - (* TyApp *) exact (t n0 A c s /\ t n0 M c s).
-      - (* TmConst *) destruct (sig.defined_dec_ty k s).
-        refine (t _ (sig.get d) ctx.nil s).
-        exact False.
-      - (* TmVar *) exact (t _ (ctx.nth c f) c s).
-      - (* TmApp *) exact (t n0 M c s /\ t n0 N c s).
-    Admitted.
-
-    (* Fixpoint dec {n} (e : expr.t n) (c : ctx.t n) (s : sig.t) : {t e c s} + {~ t e c s}. *)
-
-
-  End canonical.
 
   Module Judgments.
     Local Open Scope list.
@@ -662,9 +516,9 @@ Module LF.
     Inductive sig_wf : sig.t -> Prop :=
     | B_EMPTY_SIG : sig_wf []
     | B_KIND_SIG  :
-        forall a Sig K (Ha : sig.defined a Sig -> False) (HK : kind_wf [] ctx.nil K) (HS : sig_wf Sig), sig_wf ((a,K):: Sig)
+        forall a Sig K (Ha : ~ sig.defined a Sig) (HK : kind_wf [] ctx.nil K) (HS : sig_wf Sig), sig_wf ((a,K):: Sig)
     | B_TYPE_SIG  :
-        forall c Sig A (Hc : sig.defined c Sig -> False) (HA : has_kind [] ctx.nil A expr.KType) (HS : sig_wf Sig), sig_wf ((c,A)::Sig)
+        forall c Sig A (Hc : ~ sig.defined c Sig) (HA : has_kind [] ctx.nil A expr.KType) (HS : sig_wf Sig), sig_wf ((c,A)::Sig)
     with ctx_wf : forall {n}, sig.t -> ctx.t n -> Prop :=
     | B_EMPTY_CTX : forall Sig, @ctx_wf 0 Sig ctx.nil
     | B_TYPE_CTX  : forall n Sig C A e (HC : @ctx_wf n Sig C) (HA : has_kind Sig C A expr.KType), @ctx_wf (S n) Sig (ctx.cons e C)
@@ -689,41 +543,19 @@ Module LF.
         @has_type n Sig C M A'
     .
 
-    Hint Constructors sig_wf ctx_wf kind_wf has_kind has_type.
-    (* Hint out of a module?? *)
-
-    Module notations.
-      Delimit Scope Judgments_scope with judg.
-      (* Bind Scope Judgments_scope with . *)
-
-      Notation " S >> H " := (ctx_wf S H) (at level 60).
-      Notation " S ; H >> K " := (kind_wf S H K) (at level 60).
-      Notation " S ; H >> A : K " := (has_kind S H A K) (at level 60).
-      Notation " S ; H >> M :: A " := (has_kind S H M A) (at level 60).
-
-    End notations.
-
 
     (** properties of the LF type theory *)
     Theorem weakening_kind : forall n m Sig (C : ctx.t n) (C' : ctx.t m) K,
         kind_wf Sig C K -> ctx_wf Sig (ctx.concat C C') -> kind_wf Sig (ctx.concat C C') (expr.lift_k m 0 K).
     Proof.
-      induction C; induction C'; intros.
-      (**
-      inv H.
-
-      replace (ctx.concat C ctx.nil) with C. (* computation in type !! *)
-      unfold ctx.concat in *. simpl in *. simpl. *)
-
-    Abort.
-
+      induction n.
+    Admitted.
     
      
   End Judgments.
   
 
   Module arith.
-    Locate "->".
     Local Open Scope string.
     Import expr.
 
@@ -732,9 +564,9 @@ Module LF.
     Definition z : guid.t * expr.t 0 := ("z", TyConst "t").
     Definition s : guid.t * expr.t 0 := ("s", TyPi (TyConst "t") (TyConst "t")).
     Definition plus : guid.t * expr.t 0 :=
-      ("plus", (TyConst "t") -> (TyConst "t") -> (TyConst "t")).
+      ("plus", TyPi (TyConst "t") (TyPi (TyConst "t") (TyConst "t"))).
     Definition mult : guid.t * expr.t 0 :=
-      ("mult", (TyConst "t") -> (TyConst "t") -> (TyConst "t")).
+      ("mult", TyPi (TyConst "t") (TyPi (TyConst "t") (TyConst "t"))).
      
     (** judgments *)
     (* value *)
@@ -742,30 +574,28 @@ Module LF.
     Definition v_z   : guid.t * expr.t 0 := ("v/z", TyApp (TyConst "value") (TmConst "z")).
     (* v/s : Π V : t , Π _ : value V , value (s V) *)
     Definition v_s   : guid.t * expr.t 0 :=
-      ("v/s", (TyConst "t")
-              -> ((TyConst "value") (TmVar Fin.F1))
-              -> ((TyConst "value") ((TmConst "s") (TmVar (Fin.FS Fin.F1))))).
-
+      ("v/s", TyPi (TyConst "t")
+                   (TyPi (TyApp (TyConst "value") (TmVar Fin.F1))
+                         (TyApp (TyConst "value") (TmApp (TmConst "s") (TmVar (Fin.FS Fin.F1)))))).
 
     (* small step judgment *)
     Definition step : guid.t * expr.t 0 := ("step", KPi (TyConst "t") (KPi (TyConst "t") KType)).
     (* step/plus/s : Π E : t, Π V : t, Π _ : value E, Π _ : value V, step (plus (s V) E) (s (plus V E)) *)
     Definition step_plus_s : guid.t * expr.t 0 :=
-      ("step/plus/s", (TyConst "t") (* E *)
-                      -> (TyConst "t") (* V *)
-                      -> ((TyConst "value") (TmVar (Fin.FS Fin.F1))) (* value E *)
-                      -> ((TyConst "value") (TmVar (Fin.FS Fin.F1))) (* value V *)
-                      -> (TyConst "step")
-                          ((TmConst "plus") ((TmConst "s") (TmVar (Fin.FS (Fin.FS Fin.F1)))) (TmVar (Fin.FS (Fin.FS (Fin.FS Fin.F1)))))
-                          ((TmConst "s") (((TmConst "plus") (TmVar (Fin.FS (Fin.FS Fin.F1)))) (TmVar (Fin.FS (Fin.FS (Fin.FS Fin.F1))))))).
-
-
+      ("step/plus/s", TyPi (TyConst "t") (* E *)
+                           (TyPi (TyConst "t") (* V *)
+                                 (TyPi (TyApp (TyConst "value") (TmVar (Fin.FS Fin.F1))) (* value E *)
+                                       (TyPi (TyApp (TyConst "value") (TmVar (Fin.FS Fin.F1))) (* value V *)
+                                             (TyApp (TyApp (TyConst "step")
+                                                           (TmApp (TmApp (TmConst "plus") (TmApp (TmConst "s") (TmVar (Fin.FS (Fin.FS Fin.F1)))))
+                                                                  (TmVar (Fin.FS (Fin.FS (Fin.FS Fin.F1))))))
+                                                    (TmApp (TmConst "s") (TmApp (TmApp (TmConst "plus") (TmVar (Fin.FS (Fin.FS Fin.F1))))
+                                                                                (TmVar (Fin.FS (Fin.FS (Fin.FS Fin.F1))))))))))).
     (* step/plus/z : Π V : t, Π _ : value V, step (plus z V) V *)
     Definition step_plus_z : guid.t * expr.t 0 :=
-      ("step/plus/z", (TyConst "t")
-                      -> (TyConst "value") (TmVar Fin.F1)
-                      -> (TyConst "step") ((TyConst "plus") (TmConst "z") (TmVar (Fin.FS Fin.F1))) (TmVar (Fin.FS Fin.F1))).
-
+      ("step/plus/z", TyPi (TyConst "t")
+                           (TyPi (TyApp (TyConst "value") (TmVar Fin.F1))
+                                 (TyApp (TyApp (TyConst "step") (TyApp (TyApp (TyConst "plus") (TmConst "z")) (TmVar (Fin.FS Fin.F1)))) (TmVar (Fin.FS Fin.F1))))).
     (* step/mult/s : Π E:t, Π V:t, Π _:value E, Π _:value V
                        , step (mult (s V) E) (plus (mult V E) E) *)
     Definition step_mult_s : guid.t * expr.t 0 :=
@@ -928,7 +758,6 @@ Module arith.
   Hint Constructors step.
   Hint Constructors big_step.
   Hint Constructors value.
-  Hint Constructors canonical.
   Hint Constructors t.
 
   Lemma step_to_nat_trans : forall e e', step e e' -> to_nat e = to_nat e'.
@@ -1055,51 +884,7 @@ Module adequacy.
     Eval compute in CL_tm_syn (s (s z)).
   End test.
 
-  Import LF.expr.
-  Import LF.expr.notations.
-  Import LF.Judgments.notations.
-  Import LF.Judgments.
-  Local Open Scope judg.
-  Local Open Scope expr.
-  (* Hint Constructors sig_wf ctx_wf kind_wf has_kind has_type. *)
-
-  Theorem adequacy_syntax : forall e, arith.canonical e -> has_type LF.arith.Sig LF.ctx.nil (CL_tm_syn e) (TyConst "t").
-    induction e; eauto; simpl; intros.
-    - apply B_CONST_OBJ. apply B_EMPTY_CTX.
-      unfold LF.arith.Sig.
-      unfold LF.arith.z.
-      exact (member.There member.Here).
-    - assert (subst (TyConst "t") ((CL_tm_syn e) :: identity_subst 0) = TyConst "t") by auto.
-      rewrite <- H0.
-      apply B_APP_OBJ with (A := TyConst "t").
-      apply B_CONST_OBJ. apply B_EMPTY_CTX.
-      unfold LF.arith.Sig. unfold LF.arith.s.
-      exact (member.There (member.There member.Here)).
-      apply IHe.
-      inv H; auto.
-    - inv H.
-      assert (subst (TyConst "t") (CL_tm_syn e2 :: identity_subst 0) = TyConst "t") by auto.
-      rewrite <- H0.
-      apply B_APP_OBJ with (A := TyConst "t").
-      assert (subst (TyConst "t" -> TyConst "t") (CL_tm_syn e1 :: identity_subst 0) = (TyConst "t" -> TyConst "t")) by auto.
-      rewrite <- H1.
-      apply B_APP_OBJ with (A := TyConst "t").
-      apply B_CONST_OBJ. apply B_EMPTY_CTX.
-      unfold LF.arith.Sig. unfold LF.arith.plus. exact (member.There (member.There (member.There member.Here))).
-      apply IHe1; auto. apply IHe2; auto.
-    - inv H.
-      assert (subst (TyConst "t") (CL_tm_syn e2 :: identity_subst 0) = TyConst "t") by auto.
-      rewrite <- H0.
-      apply B_APP_OBJ with (A := TyConst "t").
-      assert (subst (TyConst "t" -> TyConst "t") (CL_tm_syn e1 :: identity_subst 0) = (TyConst "t" -> TyConst "t")) by auto.
-      rewrite <- H1.
-      apply B_APP_OBJ with (A := TyConst "t").
-      apply B_CONST_OBJ. apply B_EMPTY_CTX.
-      unfold LF.arith.Sig. unfold LF.arith.mult. exact (member.There (member.There (member.There (member.There member.Here)))).
-      apply IHe1; auto. apply IHe2; auto.
-  Qed.
-
-  Theorem adequate_syntax_surjective : forall e, arith.canonical e -> LC_tm_syn (CL_tm_syn e) = Some e.
+  Goal forall e, arith.canonical e -> LC_tm_syn (CL_tm_syn e) = Some e.
     induction e; intros.
     - simpl; reflexivity.
     - inv H. apply IHe in H1. simpl.
@@ -1109,9 +894,6 @@ Module adequacy.
     - inv H. apply IHe1 in H2. apply IHe2 in H3. simpl.
       rewrite H2. rewrite H3. reflexivity.
   Qed.
-
-
-
   
   Check arith.plus_step. (* : forall v e : arith.t, arith.value v -> arith.step ... *)
   (* proof system adequacy *)
