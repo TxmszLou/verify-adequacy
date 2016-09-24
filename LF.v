@@ -418,13 +418,15 @@ Module LF.
     | def_trans : forall n M1 M2 M3, @def_eq n M1 M2 -> @def_eq n M2 M3 -> @def_eq n M1 M3
     .
 
+    Definition nf {n} (e : expr.t n) : Prop := ~ exists v, par_red e v.
+
     Module notations.
       Delimit Scope expr_scope with expr.
       Bind Scope expr_scope with expr.t.
 
       Coercion TmApp : expr.t >-> Funclass.
-      Coercion TyApp : expr.t >-> Funclass.
 
+      (* Coercion TyApp : expr.t >-> Funclass. *)
       Notation "'\' e" := (expr.TmLam e) (at level 50) : expr_scope.
       Notation "'/\' e" := (expr.TyLam e) (at level 50) : expr_scope.
       Notation "A -> B" := (expr.TyPi A B) : expr_scope.
@@ -492,21 +494,35 @@ Module LF.
                           (cons (expr.KType) nil)) (Fin.FS (Fin.F1)).
     (* => expr.KType *)
 
-    Hint Rewrite plus_n_O.
-    Hint Rewrite Nat.add_succ_r.
+    Lemma plus_n_O' : forall n : nat , n = n + 0.
+      induction n.
+      reflexivity.
+      simpl.
+      rewrite <- IHn. reflexivity.
+    Defined.
+
+
+    Lemma add_succ_r : forall n m : nat, n + S m = S (n + m).
+    induction n; simpl; intros.
+    reflexivity.
+    rewrite IHn.
+    reflexivity.
+    Defined.
+    
     (* context concatenation *)
     Fixpoint concat {n} {m} (C : t n) (C' : t m) : t (n + m).
       refine match C' with
              | nil => _
              | cons e C' => _
              end.
-      - replace (n + 0) with n by apply plus_n_O. exact C.
-      - Search (_ + S _ = S _). replace (n + S n0) with (S (n + n0)) by (symmetry; apply Nat.add_succ_r).
+      - replace (n + 0) with n by apply plus_n_O'. exact C.
+      - Search (_ + S _ = S _). replace (n + S n0) with (S (n + n0)) by (symmetry; apply add_succ_r).
         refine (cons _ _ ).
         replace (n + n0) with (n0 + n) by omega.
         exact (expr.lift_k n 0 e).
         exact (concat n n0 C C').
     Defined.
+
 
     Module test.
       Variable n : nat.
@@ -543,15 +559,13 @@ Module LF.
              | [] => _
              | (x',e)::s => _
              end.
-      - intuition.
+      - right; intro. inv H.
       - destruct (guid.eq_dec x x').
         left. rewrite e0. exact (Here x' s e).
         destruct (defined_dec_ty x s).
         left. exact (There x' e d).
-        right. intuition. inv H.
-        exact (n eq_refl).
-        exact (f H1).
-    Admitted.
+        right. intro. inv H; congruence. 
+    Defined.
     
 
     Fixpoint defined_dec (x : guid.t) (s : t) {struct s} : {inhabited (defined x s)} + {~ inhabited (defined x s)}.
@@ -615,6 +629,9 @@ Module LF.
   Module canonical.
     (* canonical form judgment *)
     Import expr.
+
+      (* Variable s : sig.t. *)
+
     Fixpoint t {n} (e : expr.t n) {struct e} : ctx.t n -> sig.t -> Prop.
       refine match e with
              | KType => fun _ _ => True
@@ -640,6 +657,7 @@ Module LF.
       - (* TmVar *) exact (t _ (ctx.nth c f) c s).
       - (* TmApp *) exact (t n0 M c s /\ t n0 N c s).
     Admitted.
+    
 
     (* Fixpoint dec {n} (e : expr.t n) (c : ctx.t n) (s : sig.t) : {t e c s} + {~ t e c s}. *)
 
@@ -677,14 +695,16 @@ Module LF.
     | B_LAM_FAM   : forall n Sig C K A B (HB : has_kind Sig (ctx.cons A C) B K), @has_kind n Sig C (expr.TyLam B) (expr.KPi A K)
     | B_CONV_FAM  : forall n Sig C A K K' (HA : has_kind Sig C A K) (HK' : kind_wf Sig C K') (Heq : K == K'),
         @has_kind n Sig C A K'
-    | B_APP_FAM   : forall n Sig C A K B M (HA : has_kind Sig C A (expr.KPi B K)) (HM : has_kind Sig C M B),
-        @has_kind n Sig C (expr.TyApp A M) (expr.subst K (M :: expr.identity_subst _)%vector)
+    | B_APP_FAM   : forall n Sig C A K B M K' (HA : has_kind Sig C A (expr.KPi B K)) (HM : has_type Sig C M B)
+                      (pK : K' = expr.subst K (M :: expr.identity_subst _)%vector),
+        @has_kind n Sig C (expr.TyApp A M) K'
     with has_type : forall {n}, sig.t -> ctx.t n -> expr.t n -> expr.t n -> Prop :=
     | B_CONST_OBJ : forall Sig C c A (HC : ctx_wf Sig  C) (Hc : member.t (c,A) Sig), @has_type 0 Sig C (expr.TmConst c) A
     | B_VAR_OBJ   : forall n Sig C (f : Fin.t n) A (HC : ctx_wf Sig C) (Hx : ctx.nth C f = A) , (has_type Sig C (@expr.TmVar n f) A)
     | B_LAM_OBJ   : forall n Sig C A B M (HM : has_type Sig (ctx.cons A C) M B), @has_type n Sig C (expr.TmLam M) (expr.TyPi A B)
-    | B_APP_OBJ   : forall n Sig C A B N M (HM : has_type Sig C M (expr.TyPi A B)) (HN : has_type Sig C N A),
-        @has_type n Sig C (expr.TmApp M N) (expr.subst B (N :: expr.identity_subst _)%vector)
+    | B_APP_OBJ   : forall n Sig C A B N M B' (HM : has_type Sig C M (expr.TyPi A B)) (HN : has_type Sig C N A)
+                      (pB : B' = expr.subst B (N :: expr.identity_subst _)%vector),
+        @has_type n Sig C (expr.TmApp M N) B'
     | B_CONV_OBJ  : forall n Sig C M A A' (HM : has_type Sig C M A) (HA' : has_kind Sig C A' expr.KType) (Heq : A == A'),
         @has_type n Sig C M A'
     .
@@ -708,7 +728,8 @@ Module LF.
     Theorem weakening_kind : forall n m Sig (C : ctx.t n) (C' : ctx.t m) K,
         kind_wf Sig C K -> ctx_wf Sig (ctx.concat C C') -> kind_wf Sig (ctx.concat C C') (expr.lift_k m 0 K).
     Proof.
-      induction C; induction C'; intros.
+      induction C; induction C'; intros. simpl in H0.
+      simpl.
       (**
       inv H.
 
@@ -722,6 +743,7 @@ Module LF.
   End Judgments.
   
 
+  (** c) The same simple theory formalized in LF *)
   Module arith.
     Locate "->".
     Local Open Scope string.
@@ -743,8 +765,8 @@ Module LF.
     (* v/s : Π V : t , Π _ : value V , value (s V) *)
     Definition v_s   : guid.t * expr.t 0 :=
       ("v/s", (TyConst "t")
-              -> ((TyConst "value") (TmVar Fin.F1))
-              -> ((TyConst "value") ((TmConst "s") (TmVar (Fin.FS Fin.F1))))).
+              -> (TyApp (TyConst "value") (TmVar Fin.F1))
+              -> (TyApp (TyConst "value") ((TmConst "s") (TmVar (Fin.FS Fin.F1))))).
 
 
     (* small step judgment *)
@@ -753,95 +775,92 @@ Module LF.
     Definition step_plus_s : guid.t * expr.t 0 :=
       ("step/plus/s", (TyConst "t") (* E *)
                       -> (TyConst "t") (* V *)
-                      -> ((TyConst "value") (TmVar (Fin.FS Fin.F1))) (* value E *)
-                      -> ((TyConst "value") (TmVar (Fin.FS Fin.F1))) (* value V *)
-                      -> (TyConst "step")
-                          ((TmConst "plus") ((TmConst "s") (TmVar (Fin.FS (Fin.FS Fin.F1)))) (TmVar (Fin.FS (Fin.FS (Fin.FS Fin.F1)))))
-                          ((TmConst "s") (((TmConst "plus") (TmVar (Fin.FS (Fin.FS Fin.F1)))) (TmVar (Fin.FS (Fin.FS (Fin.FS Fin.F1))))))).
+                      -> (TyApp (TyConst "value") (TmVar (Fin.FS Fin.F1))) (* value E *)
+                      -> (TyApp (TyConst "value") (TmVar (Fin.FS Fin.F1))) (* value V *)
+                      -> (TyApp (TyApp (TyConst "step")
+                                      ((TmConst "plus") ((TmConst "s") (TmVar (Fin.FS (Fin.FS Fin.F1)))) (TmVar (Fin.FS (Fin.FS (Fin.FS Fin.F1))))))
+                          ((TmConst "s") (((TmConst "plus") (TmVar (Fin.FS (Fin.FS Fin.F1)))) (TmVar (Fin.FS (Fin.FS (Fin.FS Fin.F1)))))))).
 
 
     (* step/plus/z : Π V : t, Π _ : value V, step (plus z V) V *)
     Definition step_plus_z : guid.t * expr.t 0 :=
       ("step/plus/z", (TyConst "t")
-                      -> (TyConst "value") (TmVar Fin.F1)
-                      -> (TyConst "step") ((TyConst "plus") (TmConst "z") (TmVar (Fin.FS Fin.F1))) (TmVar (Fin.FS Fin.F1))).
+                      -> (TyApp (TyConst "value") (TmVar Fin.F1))
+                      -> (TyApp (TyApp (TyConst "step") ((TyConst "plus") (TmConst "z") (TmVar (Fin.FS Fin.F1)))) (TmVar (Fin.FS Fin.F1)))).
 
     (* step/mult/s : Π E:t, Π V:t, Π _:value E, Π _:value V
                        , step (mult (s V) E) (plus (mult V E) E) *)
     Definition step_mult_s : guid.t * expr.t 0 :=
-      ("step/mult/s", TyPi (TyConst "t") (* E *)
-                           (TyPi (TyConst "t") (* V *)
-                                 (TyPi (TyApp (TyConst "value") (TmVar (Fin.FS Fin.F1))) (* value E *)
-                                       (TyPi (TyApp (TyConst "value") (TmVar (Fin.FS Fin.F1)))  (* value V *)
-                                             (TyApp (TyApp (TyConst "step")
-                                                           (TmApp (TmApp (TmConst "mult") (TmApp (TmConst "s") (TmVar (Fin.FS (Fin.FS Fin.F1)))))
-                                                                  (TmVar (Fin.FS (Fin.FS (Fin.FS Fin.F1))))))
-                                                    (TmApp (TmApp (TmConst "plus") (TmApp (TmApp (TmConst "mult") (TmVar (Fin.FS (Fin.FS Fin.F1)))) (TmVar (Fin.FS (Fin.FS (Fin.FS Fin.F1))))))
-                                                           (TmVar (Fin.FS (Fin.FS (Fin.FS Fin.F1)))))))))).
+      ("step/mult/s", (TyConst "t") (* E *)
+                      -> (TyConst "t") (* V *)
+                      -> (TyApp (TyConst "value") (TmVar (Fin.FS Fin.F1))) (* value E *)
+                      -> (TyApp (TyConst "value") (TmVar (Fin.FS Fin.F1)))  (* value V *)
+                      -> (TyApp (TyApp (TyConst "step") ((TmConst "mult") ((TmConst "s") (TmVar (Fin.FS (Fin.FS Fin.F1)))) (TmVar (Fin.FS (Fin.FS (Fin.FS Fin.F1))))))
+                                         ((TmConst "plus") ((TmConst "mult") (TmVar (Fin.FS (Fin.FS Fin.F1))) (TmVar (Fin.FS (Fin.FS (Fin.FS Fin.F1)))))
+                                                           (TmVar (Fin.FS (Fin.FS (Fin.FS Fin.F1))))))).
+
+
     (* step/mult/z : Π V:t, Π _:value V, step (mult z V) z  *)
     Definition step_mult_z : guid.t * expr.t 0 :=
-      ("step/mult/z", TyPi (TyConst "t") (* V *)
-                           (TyPi (TyApp (TyConst "value") (TmVar Fin.F1))
-                                 (TyApp (TyApp (TyConst "step")
-                                               (TmApp (TmApp (TmConst "mult") (TmConst "z")) (TmVar (Fin.FS Fin.F1)))) (* mult z V *)
-                                        (TmConst "z")))).
+      ("step/mult/z", (TyConst "t") (* V *)
+                      -> (TyApp (TyConst "value") (TmVar Fin.F1))
+                      -> (TyApp (TyApp (TyConst "step") (TmApp (TmApp (TmConst "mult") (TmConst "z")) (TmVar (Fin.FS Fin.F1)))) (* mult z V *)
+                               (TmConst "z"))).
 
     (* step/congr/s : Π E:t, Π E':t, Π _:step E E', step (s E) (s E') *)
     Definition step_congr_s : guid.t * expr.t 0 :=
-      ("step/congr/s", TyPi (TyConst "t") (* E:t *)
-                            (TyPi (TyConst "t") (* E':t *)
-                                  (TyPi (TyApp (TyApp (TyConst "step") (TmVar (Fin.FS Fin.F1))) (TmVar Fin.F1)) (* step E E' *)
-                                        (TyApp (TyApp (TyConst "step") (TmApp (TmConst "s") (TmVar (Fin.FS (Fin.FS Fin.F1)))))
-                                               (TmApp (TmConst "s") (TmVar (Fin.FS Fin.F1))))))).
+      ("step/congr/s", (TyConst "t") (* E:t *)
+                       -> (TyConst "t") (* E':t *)
+                       -> (TyApp (TyApp (TyConst "step") (TmVar (Fin.FS Fin.F1))) (TmVar Fin.F1)) (* step E E' *)
+                       -> (TyApp (TyApp (TyConst "step") ((TmConst "s") (TmVar (Fin.FS (Fin.FS Fin.F1)))))
+                                ((TmConst "s") (TmVar (Fin.FS Fin.F1))))).
 
     (* step/congr/plus1 : Π E1 E1' E2, Π _:step E1 E1', step (plus E1 E2) (plus E1' E2) *)
     Definition step_congr_plus1 : guid.t * expr.t 0 :=
-      ("step/congr/plus1", TyPi (TyConst "t") (*E1*)
-                                (TyPi (TyConst "t") (*E1'*)
-                                      (TyPi (TyConst "t") (*E2*)
-                                            (TyPi (TyApp (TyApp (TyConst "step") (TmVar (Fin.FS (Fin.FS (Fin.F1))))) (TmVar (Fin.FS Fin.F1)))
-                                                  (TyApp (TyApp (TyConst "step") (TmApp (TmApp (TmConst "plus") (TmVar (Fin.FS (Fin.FS (Fin.FS Fin.F1))))) (TmVar (Fin.FS Fin.F1))))
-                                                         (TmApp (TmApp (TmConst "plus") (TmVar (Fin.FS (Fin.FS Fin.F1)))) (TmVar (Fin.FS Fin.F1)))))))).
+      ("step/congr/plus1", (TyConst "t") (*E1*)
+                           -> (TyConst "t") (*E1'*)
+                           -> (TyConst "t") (*E2*)
+                           -> (TyApp (TyApp (TyConst "step") (TmVar (Fin.FS (Fin.FS (Fin.F1))))) (TmVar (Fin.FS Fin.F1)))
+                           -> (TyApp (TyApp (TyConst "step") ((TmConst "plus") (TmVar (Fin.FS (Fin.FS (Fin.FS Fin.F1)))) (TmVar (Fin.FS Fin.F1))))
+                                    ((TmConst "plus") (TmVar (Fin.FS (Fin.FS Fin.F1))) (TmVar (Fin.FS Fin.F1))))).
                                                                   
     Definition step_congr_plus2 : guid.t * expr.t 0 :=
-      ("step/congr/plus2", TyPi (TyConst "t") (*E1*)
-                                (TyPi (TyConst "t") (*E2*)
-                                      (TyPi (TyConst "t") (*E2'*)
-                                            (TyPi (TyApp (TyApp (TyConst "step") (TmVar (Fin.FS Fin.F1))) (TmVar Fin.F1))
-                                                  (TyApp (TyApp (TyConst "step")
-                                                                (TmApp (TmApp (TmConst "plus") (TmVar (Fin.FS (Fin.FS (Fin.FS Fin.F1))))) (TmVar (Fin.FS (Fin.FS Fin.F1)))))
-                                                         (TmApp (TmApp (TmConst "plus") (TmVar (Fin.FS (Fin.FS (Fin.FS Fin.F1))))) (TmVar (Fin.FS Fin.F1)))))))).
+      ("step/congr/plus2", (TyConst "t") (*E1*)
+                           -> (TyConst "t") (*E2*)
+                           -> (TyConst "t") (*E2'*)
+                           -> (TyApp (TyApp (TyConst "step") (TmVar (Fin.FS Fin.F1))) (TmVar Fin.F1))
+                           -> (TyApp (TyApp (TyConst "step") ((TmConst "plus") (TmVar (Fin.FS (Fin.FS (Fin.FS Fin.F1)))) (TmVar (Fin.FS (Fin.FS Fin.F1)))))
+                                    ((TmConst "plus") (TmVar (Fin.FS (Fin.FS (Fin.FS Fin.F1)))) (TmVar (Fin.FS Fin.F1))))).
                                                     
     Definition step_congr_mult1 : guid.t * expr.t 0 :=
-      ("step/congr/mult1", TyPi (TyConst "t") (*E1*)
-                                (TyPi (TyConst "t") (*E1'*)
-                                      (TyPi (TyConst "t") (*E2*)
-                                            (TyPi (TyApp (TyApp (TyConst "step") (TmVar (Fin.FS (Fin.FS (Fin.F1))))) (TmVar (Fin.FS Fin.F1)))
-                                                  (TyApp (TyApp (TyConst "step") (TmApp (TmApp (TmConst "mult") (TmVar (Fin.FS (Fin.FS (Fin.FS Fin.F1))))) (TmVar (Fin.FS Fin.F1))))
-                                                         (TmApp (TmApp (TmConst "plus") (TmVar (Fin.FS (Fin.FS Fin.F1)))) (TmVar (Fin.FS Fin.F1)))))))).
+      ("step/congr/mult1", (TyConst "t") (*E1*)
+                           -> (TyConst "t") (*E1'*)
+                           -> (TyConst "t") (*E2*)
+                           -> (TyApp (TyApp (TyConst "step") (TmVar (Fin.FS (Fin.FS (Fin.F1))))) (TmVar (Fin.FS Fin.F1)))
+                           -> (TyApp (TyApp (TyConst "step") ((TmConst "mult") (TmVar (Fin.FS (Fin.FS (Fin.FS Fin.F1)))) (TmVar (Fin.FS Fin.F1))))
+                                    ((TmConst "mult") (TmVar (Fin.FS (Fin.FS Fin.F1))) (TmVar (Fin.FS Fin.F1))))).
                                                                   
     Definition step_congr_mult2 : guid.t * expr.t 0 :=
-      ("step/congr/mult2", TyPi (TyConst "t") (*E1*)
-                                (TyPi (TyConst "t") (*E2*)
-                                      (TyPi (TyConst "t") (*E2'*)
-                                            (TyPi (TyApp (TyApp (TyConst "step") (TmVar (Fin.FS Fin.F1))) (TmVar Fin.F1))
-                                                  (TyApp (TyApp (TyConst "step")
-                                                                (TmApp (TmApp (TmConst "mult") (TmVar (Fin.FS (Fin.FS (Fin.FS Fin.F1))))) (TmVar (Fin.FS (Fin.FS Fin.F1)))))
-                                                         (TmApp (TmApp (TmConst "plus") (TmVar (Fin.FS (Fin.FS (Fin.FS Fin.F1))))) (TmVar (Fin.FS Fin.F1)))))))).
+      ("step/congr/mult2", (TyConst "t") (*E1*)
+                           -> (TyConst "t") (*E2*)
+                           -> (TyConst "t") (*E2'*)
+                           -> (TyApp (TyApp (TyConst "step") (TmVar (Fin.FS Fin.F1))) (TmVar Fin.F1))
+                           -> (TyApp (TyApp (TyConst "step") ((TmConst "mult") (TmVar (Fin.FS (Fin.FS (Fin.FS Fin.F1)))) (TmVar (Fin.FS (Fin.FS Fin.F1)))))
+                                    ((TmConst "mult") (TmVar (Fin.FS (Fin.FS (Fin.FS Fin.F1)))) (TmVar (Fin.FS Fin.F1))))).
 
     (* big step judgment *)
     Definition big_step : guid.t * expr.t 0 :=
       ("big-step", KPi (TyConst "t") (KPi (TyConst "t") KType)).
     Definition big_step_z : guid.t * expr.t 0 :=
-      ("big-step/z", TyPi (TyConst "t") (TyApp (TyApp (TyConst "big-step") (TmVar Fin.F1)) (TmVar Fin.F1))).
+      ("big-step/z", (TyConst "t") -> (TyConst "big-step") (TmVar Fin.F1) (TmVar Fin.F1)).
     Definition big_step_s : guid.t * expr.t 0 :=
-      ("big-step/s", TyPi (TyConst "t") (* E1 *)
-                          (TyPi (TyConst "t") (* E2 *)
-                                (TyPi (TyConst "t") (* E3 *)
-                                      (TyPi (TyApp (TyApp (TyConst "step") (TmVar (Fin.FS (Fin.FS Fin.F1)))) (TmVar (Fin.FS Fin.F1))) (* step E1 E2 *)
-                                            (TyPi (TyApp (TyApp (TyConst "big-step") (TmVar (Fin.FS (Fin.FS Fin.F1)))) (TmVar (Fin.FS Fin.F1)))
-                                                  (TyApp (TyApp (TyConst "big-step") (TmVar (Fin.FS (Fin.FS (Fin.FS (Fin.FS Fin.F1))))))
-                                                         (TmVar (Fin.FS (Fin.FS Fin.F1))))))))).
+      ("big-step/s", (TyConst "t") (* E1 *)
+                     -> (TyConst "t") (* E2 *)
+                     -> (TyConst "t") (* E3 *)
+                     -> (TyApp (TyApp (TyConst "step") (TmVar (Fin.FS (Fin.FS Fin.F1)))) (TmVar (Fin.FS Fin.F1))) (* step E1 E2 *)
+                     -> (TyApp (TyApp (TyConst "big-step") (TmVar (Fin.FS (Fin.FS Fin.F1)))) (TmVar (Fin.FS Fin.F1)))
+                     -> (TyApp (TyApp (TyConst "big-step") (TmVar (Fin.FS (Fin.FS (Fin.FS (Fin.FS Fin.F1))))))
+                                            (TmVar (Fin.FS (Fin.FS Fin.F1))))).
 
     Definition Sig : sig.t := [ t ; z ; s ; plus ; mult ; value ; v_z ; v_s
                                ; step ; step_plus_s ; step_plus_z ; step_mult_s ; step_mult_z
@@ -858,6 +877,7 @@ End LF.
 
 
 
+(** b) A simple theory formalized in Coq *)
 Module arith.
   (* arithmetic *)
 
@@ -911,6 +931,21 @@ Module arith.
   | this : forall v, value v -> big_step v v
   | next : forall e e' e'', big_step e e' -> step e' e'' -> big_step e e''. *)
 
+  Hint Constructors step.
+  Hint Constructors big_step.
+  Hint Constructors value.
+  Hint Constructors canonical.
+  Hint Constructors t.
+
+  Lemma value_canonical : forall v, value v -> canonical v.
+    induction v; intros; auto.
+    apply c_s. invc H. apply (IHv H1).
+    invc H.
+    invc H.
+  Qed.
+
+  Hint Resolve value_canonical.
+
   Fixpoint to_nat (e : t) : nat :=
     match e with
     | z => 0
@@ -925,11 +960,6 @@ Module arith.
     | S n => s (to_t n)
     end.
 
-  Hint Constructors step.
-  Hint Constructors big_step.
-  Hint Constructors value.
-  Hint Constructors canonical.
-  Hint Constructors t.
 
   Lemma step_to_nat_trans : forall e e', step e e' -> to_nat e = to_nat e'.
     intro e. induction e; simpl; intros; inv H; simpl in *; auto; try apply Nat.add_comm.
@@ -993,6 +1023,7 @@ Module arith.
 End arith.
 
 
+(** d) in Coq, prove adequacy between b) and c) *)
 Module adequacy.
 
   (** LA (LF.arith) ~= CA (Coq arith) *)
@@ -1044,6 +1075,7 @@ Module adequacy.
               | None   => None
               end) e)
     in outer.
+
   
   Module test.
     Import arith.
@@ -1064,42 +1096,20 @@ Module adequacy.
   (* Hint Constructors sig_wf ctx_wf kind_wf has_kind has_type. *)
 
   Theorem adequacy_syntax : forall e, arith.canonical e -> has_type LF.arith.Sig LF.ctx.nil (CL_tm_syn e) (TyConst "t").
-    induction e; eauto; simpl; intros.
-    - apply B_CONST_OBJ. apply B_EMPTY_CTX.
-      unfold LF.arith.Sig.
-      unfold LF.arith.z.
-      exact (member.There member.Here).
-    - assert (subst (TyConst "t") ((CL_tm_syn e) :: identity_subst 0) = TyConst "t") by auto.
-      rewrite <- H0.
-      apply B_APP_OBJ with (A := TyConst "t").
-      apply B_CONST_OBJ. apply B_EMPTY_CTX.
-      unfold LF.arith.Sig. unfold LF.arith.s.
-      exact (member.There (member.There member.Here)).
-      apply IHe.
-      inv H; auto.
+  Proof with eauto 10 using member.There, member.Here.
+    induction e; simpl; intros...
+    - inv H...
     - inv H.
-      assert (subst (TyConst "t") (CL_tm_syn e2 :: identity_subst 0) = TyConst "t") by auto.
-      rewrite <- H0.
-      apply B_APP_OBJ with (A := TyConst "t").
-      assert (subst (TyConst "t" -> TyConst "t") (CL_tm_syn e1 :: identity_subst 0) = (TyConst "t" -> TyConst "t")) by auto.
-      rewrite <- H1.
-      apply B_APP_OBJ with (A := TyConst "t").
-      apply B_CONST_OBJ. apply B_EMPTY_CTX.
-      unfold LF.arith.Sig. unfold LF.arith.plus. exact (member.There (member.There (member.There member.Here))).
-      apply IHe1; auto. apply IHe2; auto.
+      eapply B_APP_OBJ with (B := TyConst "t")...
+      eapply B_APP_OBJ...
     - inv H.
-      assert (subst (TyConst "t") (CL_tm_syn e2 :: identity_subst 0) = TyConst "t") by auto.
-      rewrite <- H0.
-      apply B_APP_OBJ with (A := TyConst "t").
-      assert (subst (TyConst "t" -> TyConst "t") (CL_tm_syn e1 :: identity_subst 0) = (TyConst "t" -> TyConst "t")) by auto.
-      rewrite <- H1.
-      apply B_APP_OBJ with (A := TyConst "t").
-      apply B_CONST_OBJ. apply B_EMPTY_CTX.
-      unfold LF.arith.Sig. unfold LF.arith.mult. exact (member.There (member.There (member.There (member.There member.Here)))).
-      apply IHe1; auto. apply IHe2; auto.
+      eapply B_APP_OBJ with (B := TyConst "t")...
+      eapply B_APP_OBJ...
   Qed.
 
-  Theorem adequate_syntax_surjective : forall e, arith.canonical e -> LC_tm_syn (CL_tm_syn e) = Some e.
+  Hint Resolve adequacy_syntax.
+
+  Theorem adequacy_syntax_surjective : forall e, arith.canonical e -> LC_tm_syn (CL_tm_syn e) = Some e.
     induction e; intros.
     - simpl; reflexivity.
     - inv H. apply IHe in H1. simpl.
@@ -1110,22 +1120,88 @@ Module adequacy.
       rewrite H2. rewrite H3. reflexivity.
   Qed.
 
+  (** optimize proof-search 
+  Ltac sig_find :=
+    match goal with
+    | [|- has_type _ _ (TmConst _) _ ] => eapply B_CONST_OBJ
+    | [|- has_kind _ _ (TyConst _) _ ] => eapply B_CONST_FAM
+    end. *)
 
+  Ltac auto10 := eauto 10 using member.Here, member.There.
 
-  
-  Check arith.plus_step. (* : forall v e : arith.t, arith.value v -> arith.step ... *)
-  (* proof system adequacy *)
-  (* a) LF type/tm -> Coq type/tm *)
-  (* b) LF Arith tm -> Coq tm *)
-  
+  Theorem adequacy_proof_step :
+    forall e1 e2, arith.canonical e1
+             -> arith.canonical e2
+             -> arith.step e1 e2
+             -> has_kind LF.arith.Sig LF.ctx.nil (TyApp (TyApp (TyConst "step") (CL_tm_syn e1)) (CL_tm_syn e2)) KType.
+    Proof with auto10.
+    induction e1; induction e2; simpl; intros; try invc H1...
+    - apply B_APP_FAM with (B := TyConst "t") (K := KType)...
+      apply B_APP_FAM with (B := TyConst "t") (K := KPi (TyConst "t") KType)...
+      apply B_APP_OBJ with (B := TyConst "t") (A := TyConst "t")...
+      invc H; invc H0...
+      invc H; invc H0...
+    - apply B_APP_FAM with (B := TyConst "t") (K := KType)...
+      apply B_APP_FAM with (B := TyConst "t") (K := KPi (TyConst "t") KType)...
+      apply B_APP_OBJ with (B := TyConst "t") (A := TyConst "t")...
+    - invc H0. invc H2. invc H.
+      apply B_APP_FAM with (B := TyConst "t") (K := KType)...
+      apply B_APP_FAM with (B := TyConst "t") (K := KPi (TyConst "t") KType)...
+      apply B_APP_OBJ with (B := TyConst "t") (A := TyConst "t")...
+    - invc H. invc H4.
+      apply B_APP_FAM with (B := TyConst "t") (K := KType)...
+      apply B_APP_FAM with (B := TyConst "t") (K := KPi (TyConst "t") KType)...
+      apply B_APP_OBJ with (B := TyConst "t") (A := TyConst "t")...
+    - invc H. invc H4.
+      apply B_APP_FAM with (B := TyConst "t") (K := KType)...
+      apply B_APP_FAM with (B := TyConst "t") (K := KPi (TyConst "t") KType)...
+      apply B_APP_OBJ with (B := TyConst "t") (A := TyConst "t")...
+      apply B_APP_OBJ with (B := TyConst "t") (A := TyConst "t")...
+    - invc H. invc H0.
+      apply B_APP_FAM with (B := TyConst "t") (K := KType)...
+      apply B_APP_FAM with (B := TyConst "t") (K := KPi (TyConst "t") KType)...
+      apply B_APP_OBJ with (B := TyConst "t") (A := TyConst "t")...
+      apply B_APP_OBJ with (B := TyConst "t") (A := TyConst "t")...
+    - invc H. invc H0.
+      apply B_APP_FAM with (B := TyConst "t") (K := KType)...
+      apply B_APP_FAM with (B := TyConst "t") (K := KPi (TyConst "t") KType)...
+      apply B_APP_OBJ with (B := TyConst "t") (A := TyConst "t")...
+      apply B_APP_OBJ with (B := TyConst "t") (A := TyConst "t")...
+    - invc H. invc H4.
+      apply B_APP_FAM with (B := TyConst "t") (K := KType)...
+      apply B_APP_FAM with (B := TyConst "t") (K := KPi (TyConst "t") KType)...
+      apply B_APP_OBJ with (B := TyConst "t") (A := TyConst "t")...
+      apply B_APP_OBJ with (B := TyConst "t") (A := TyConst "t")...
+    - invc H.
+      apply B_APP_FAM with (B := TyConst "t") (K := KType)...
+      apply B_APP_FAM with (B := TyConst "t") (K := KPi (TyConst "t") KType)...
+      apply B_APP_OBJ with (B := TyConst "t") (A := TyConst "t")...
+    - invc H0. invc H. invc H2.
+      apply B_APP_FAM with (B := TyConst "t") (K := KType)...
+      apply B_APP_FAM with (B := TyConst "t") (K := KPi (TyConst "t") KType)...
+      apply B_APP_OBJ with (B := TyConst "t") (A := TyConst "t")...
+      apply B_APP_OBJ with (B := TyConst "t") (A := TyConst "t")...
+    - invc H. invc H0.
+      apply B_APP_FAM with (B := TyConst "t") (K := KType)...
+      apply B_APP_FAM with (B := TyConst "t") (K := KPi (TyConst "t") KType)...
+      apply B_APP_OBJ with (B := TyConst "t") (A := TyConst "t")...
+      apply B_APP_OBJ with (B := TyConst "t") (A := TyConst "t")...
+    - invc H. invc H0.
+      apply B_APP_FAM with (B := TyConst "t") (K := KType)...
+      apply B_APP_FAM with (B := TyConst "t") (K := KPi (TyConst "t") KType)...
+      apply B_APP_OBJ with (B := TyConst "t") (A := TyConst "t")...
+      apply B_APP_OBJ with (B := TyConst "t") (A := TyConst "t")...
+    Qed.
+    
+  Theorem adequacy_proof_value :
+    forall v, arith.value v -> has_kind LF.arith.Sig LF.ctx.nil (TyApp (TyConst "value") (CL_tm_syn v)) KType.
+  Proof with auto10.
+    induction v; simpl; intros...
+    - invc H.
+      apply B_APP_FAM with (B := TyConst "t") (K := KType)...
+    - invc H.
+    - invc H.
+  Qed.
   
 
 End adequacy.
-
-
-
-
-
-(** b) A simple theory formalized in Coq *)
-(** c) The same simple theory formalized in LF *)
-(** d) in Coq, prove adequacy between b) and c) *)
